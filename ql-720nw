@@ -1,0 +1,231 @@
+#!/bin/bash
+
+init() {
+	#double escape to avoid garbage from old session
+	#echo -en "\x1B"
+	#set to command mode
+	echo -en "\x1Bia"
+	output_uint8 0
+	#init
+	echo -en "\x1B@"
+}
+
+high_dpi_length() {
+	echo -en "\x1BiK\x48"
+}
+
+status() {
+	echo -en "\x1BiS"
+}
+
+_rectangle_init() {
+	local m=$1
+	local count=$2
+	echo -en "\x1B*"
+	output_uint8 $m
+	output_uint16 $count
+}
+
+set_vpos_rel() {
+	echo -en "\x1B(V20"
+	output_uint16 $(uint16_complement $1)
+}
+
+uint16_complement() {
+	[ $1 -lt 0 ] && echo "$(($1+65536))" || echo "$1"
+}
+
+set_hpos_rel() {
+	echo -en "\x1B\x5C"
+	output_uint16 $(uint16_complement $1)
+}
+
+rectangle() {
+	local count=$1
+	rectangle_init $1
+	count=$((count*3))
+	while [ $count -gt 0 ]; do
+		echo -en "\x08"
+		count=$((count-1))
+	done
+}
+
+code128() {
+	echo -en "\x1Bitar0w0b"
+	echo -en "$1"
+	echo -n '\\\'
+}
+
+qr() {
+	local data="$1"
+	local reliability="${2-2}" # 1 2 3 4
+	local size="${3-3}" # 3 4 5 6 8 10
+	echo -en "\x1BiQ"
+	for i in $size 2 0 0 0 0 $reliability 0
+	do
+		output_uint8 $i
+	done
+	echo -n "$data"
+	echo -n '\\\'
+}
+
+_free_part_of_line() {
+	local line="$1"
+	local part="$2"
+	local length=${#line}
+	local freelen=$(echo "$length*$part/1" | bc)
+	local prelen="$(((length-freelen)/2))"
+	echo -n "${line:0:${prelen}}"
+	printf "%${freelen}s" |tr " " "0"
+	echo -n "${line:$((prelen+freelen))}"
+}
+
+_print_line() {
+	local line="$2"
+	_rectangle_init $1 ${#line}
+	echo -en "$line" | sed 's/1/\xFF/g' | sed 's/0/\x00/g'
+}
+
+code128_with_label() {
+	local line="$(./code128.rb "$1" | tr -d "[] ,\"")"
+	local free_line="$(_free_part_of_line "$line" "0.65")"
+	_print_line 1 "$line"
+	echo
+	_print_line 1 "$free_line"
+	echo
+	set_hpos_rel 80
+	set_vpos 102
+}
+
+landscape() {
+	# default off
+	echo -en "\x1BiL${1-1}"
+}
+
+auto_cut() {
+	# default on
+	echo -en "\x1BiC${1-1}"
+}
+
+page_feed() {
+	echo -en "\x0C"
+}
+
+size() {
+	# 24, 36, 48
+	echo -en "\x1BX\x00"
+	output_uint16 ${1-36}
+}
+
+download_data() {
+	echo -en "\x1BiFP\x00"
+}
+
+output_uint8() {
+	echo -en "\x$(printf '%02x' $1)"
+}
+
+output_uint16() {
+	output_uint8 "$(echo "$1%256" | bc)"
+	output_uint8 "$(echo "($1/256)%256" | bc)"
+}
+
+set_hpos() {
+	echo -en "\x1B$"
+	output_uint16 $1
+}
+
+set_vpos() {
+	echo -en "\x1B(V\x02\x00"
+	output_uint16 $1
+}
+
+align_center() {
+	echo -en "\x1Ba1"
+}
+
+align_left() {
+	echo -en "\x1Ba0"
+}
+
+character_spacing() {
+	echo -en "\x1B "
+	output_uint8 $1
+}
+
+style_outline() {
+	echo -en "\x1Bq\x01"
+}
+
+select_font() {
+	echo -en "\x1Bk"
+	output_uint8 $1
+}
+
+style_cancel() {
+	echo -en "\x1Bq\x00"
+}
+
+bold_apply() {
+	echo -en "\x1BE"
+}
+
+bold_cancel() {
+	echo -en "\x1BF"
+}
+
+min_margin() {
+	echo -en "\x1BU\x02" # 03 is the default
+}
+
+margin_top_bot() {
+	echo -en "\x1Bid"
+	output_uint16 $1
+}
+
+margin_left() {
+	echo -en "\x1Bl"
+	output_uint8 $1
+}
+
+margin_right() {
+	echo -en "\x1BQ"
+	output_uint8 $1
+}
+
+gen_label() {
+	init
+	landscape 1
+	set_hpos 0
+	set_vpos 0
+	margin_left 2
+	bold_apply
+	align_center
+	size 48
+	select_font 1
+	for i in "$@"; do
+		echo "$i"
+	done
+	page_feed
+}
+
+gen_h_label() {
+	init
+	set_hpos 0
+	set_vpos 0
+	margin_left 0
+	bold_apply
+	align_center
+	size 48
+	select_font 1
+	for i in "$@"; do
+		echo "$i"
+	done
+	page_feed
+}
+
+# echo -en "\x1B\x52\x02"
+#	echo -e "\x7B\x7D\xDF" -> äüß
+
+# . ./ql-720nw
+# gen_h_label "line 1" "line 2" | nc BRN00807758D8F6 9100
